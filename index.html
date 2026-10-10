@@ -155,7 +155,7 @@ input[type=checkbox]{width:18px;height:18px;padding:0;accent-color:var(--accent)
 .inv .it span:first-child{min-width:0;overflow-wrap:anywhere}
 
 /* análise */
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
 @media (max-width:760px){.kpis{grid-template-columns:1fr 1fr}.kpi .v{font-size:1.1rem;overflow-wrap:anywhere}}
 .kpi{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:4px;min-width:0}
 .kpi .v{font-family:var(--f-num);font-size:1.45rem;font-weight:500;font-variant-numeric:tabular-nums}
@@ -257,6 +257,7 @@ table.t td:first-child{font-family:var(--f-body)}
     <button role="tab" data-tab="orc" aria-selected="false">Orçamento</button>
     <button role="tab" data-tab="fixos" aria-selected="false">Fixos</button>
     <button role="tab" data-tab="cart" aria-selected="false">Cartões</button>
+    <button role="tab" data-tab="cx" aria-selected="false">Caixinhas</button>
     <button role="tab" data-tab="metas" aria-selected="false">Metas</button>
     <button role="tab" data-tab="div" aria-selected="false">Dívidas</button>
   </nav>
@@ -338,6 +339,31 @@ table.t td:first-child{font-family:var(--f-body)}
     <div class="cards" id="cartoes"></div>
   </section>
 
+  <!-- CAIXINHAS -->
+  <section class="panel" data-panel="cx" hidden>
+    <div class="box" style="flex-direction:row;flex-wrap:wrap;gap:24px">
+      <div><div class="label">Total guardado</div><div class="num pos" id="cxTotal" style="font-size:1.5rem">R$ 0,00</div></div>
+      <div><div class="label">Já rendeu</div><div class="num" id="cxRend" style="font-size:1.3rem">R$ 0,00</div></div>
+      <div><div class="label" id="cxMesL">Guardado este mês</div><div class="num" id="cxMes" style="font-size:1.3rem">R$ 0,00</div></div>
+    </div>
+    <div class="box">
+      <h2>Nova caixinha</h2>
+      <form class="addform" id="xf">
+        <label class="field"><span>Nome</span><input id="xNome" placeholder="Reserva de emergência" required maxlength="50"></label>
+        <label class="field"><span>Banco</span><input id="xBanco" placeholder="Nubank" maxlength="30"></label>
+        <label class="field"><span>Quanto tem nela hoje (R$)</span><input id="xSaldo" inputmode="decimal" placeholder="0,00"></label>
+        <label class="field"><span>Meta (opcional, R$)</span><input id="xAlvo" inputmode="decimal" placeholder="6.000"></label>
+        <button class="btn" type="submit">Criar caixinha</button>
+      </form>
+      <p class="hint">Dinheiro guardado não conta como gasto. Para registrar quanto rendeu, use <b>Atualizar saldo</b> com o valor que aparece no app do banco; a diferença entra como rendimento.</p>
+    </div>
+    <div class="cards" id="cxCards"></div>
+    <div class="box">
+      <h2>Movimentações das caixinhas</h2>
+      <div class="list" id="cxHist"></div>
+    </div>
+  </section>
+
   <!-- METAS -->
   <section class="panel" data-panel="metas" hidden>
     <div class="box">
@@ -395,10 +421,10 @@ const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
 const moneyIn=v=>v?String(v).replace(".",","):"";
 const slug=s=>s.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-");
 
-const state={lanc:[],orc:{},metas:[],div:[],fixos:[],cartoes:[],tipo:"despesa",month:today().slice(0,7),edit:null,showTable:false};
+const state={lanc:[],orc:{},metas:[],div:[],fixos:[],cartoes:[],cx:[],cxm:[],tipo:"despesa",month:today().slice(0,7),edit:null,showTable:false};
 
 /* ---------- dados: db do artifact, com reserva local ---------- */
-const COLS=["lancamentos","orcamentos","metas","dividas","fixos","cartoes"];
+const COLS=["lancamentos","orcamentos","metas","dividas","fixos","cartoes","caixinhas","caixinha_movs"];
 let store=null;
 function toast(msg){const t=$("toast");t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,2400)}
 function onErr(e){console.error(e);toast(e&&e.code==="quota_exceeded"?"Espaço cheio: apague lançamentos antigos.":"Não foi possível salvar. Tente de novo.")}
@@ -438,6 +464,8 @@ function attach(s,label){
   s.sub("dividas",r=>{state.div=r;schedule()});
   s.sub("fixos",r=>{state.fixos=r;schedule()});
   s.sub("cartoes",r=>{state.cartoes=r;fillPag();schedule()});
+  s.sub("caixinhas",r=>{state.cx=r;schedule()});
+  s.sub("caixinha_movs",r=>{state.cxm=r;schedule()});
 }
 let downloads=null;
 (async()=>{
@@ -568,9 +596,8 @@ function render(){
   $("sSaldo").textContent=brl(saldo);$("sSaldo").className="big num "+(saldo<0?"neg":"pos");
   $("sHint").textContent=entrou>0?`Você gastou ${pct(saiu/entrou)} do que entrou`:"Receitas menos despesas";
   $("sOutH").textContent=prevFx>0?`inclui ${brl(prevFx)} de fixos ainda por vencer`:"";
-  $("sInH").textContent="";
 
-  const hasEx=[...state.lanc,...state.metas,...state.div,...state.fixos,...state.cartoes].some(x=>x.exemplo);
+  const hasEx=[...state.lanc,...state.metas,...state.div,...state.fixos,...state.cartoes,...state.cx].some(x=>x.exemplo);
   $("exNotice").hidden=!hasEx;
   const tags=x=>(x.exemplo?'<span class="tag ex">exemplo</span>':"")+(x.fixoId?'<span class="tag fx">fixo</span>':"")+(x.virtual&&x.data>hoje?'<span class="tag prev">previsto</span>':"");
 
@@ -610,7 +637,10 @@ function render(){
   renderFixos();
   renderCards();
   renderMetas();
+  renderCx();
   renderDiv();
+  const gm=cxMonth(mk);
+  $("sInH").textContent=gm>0?`Você guardou ${brl(gm)} nas caixinhas`:"";
   renderAnalysis(mes,entrou,saiu,porCat);
 }
 
@@ -703,6 +733,59 @@ function renderMetas(){
   $("metas").querySelectorAll("[data-gd]").forEach(b=>b.onclick=()=>confirmBtn(b,()=>store.del("metas",b.dataset.gd)));
 }
 
+/* ---------- caixinhas ---------- */
+const MOV={inicial:["Saldo inicial",1],deposito:["Guardou",1],resgate:["Resgatou",-1],rendimento:["Rendimento",1]};
+const cxSaldo=id=>state.cxm.filter(m=>m.caixinhaId===id).reduce((s,m)=>s+(MOV[m.tipo]?.[1]||0)*(+m.valor||0),0);
+const cxRend=id=>state.cxm.filter(m=>m.caixinhaId===id&&m.tipo==="rendimento").reduce((s,m)=>s+(+m.valor||0),0);
+const cxMonth=mk=>state.cxm.filter(m=>(m.data||"").startsWith(mk)&&(m.tipo==="deposito"||m.tipo==="resgate")&&state.cx.some(c=>c.id===m.caixinhaId)).reduce((s,m)=>s+(m.tipo==="deposito"?1:-1)*(+m.valor||0),0);
+const r2=v=>Math.round(v*100)/100;
+function renderCx(){
+  const ids=new Set(state.cx.map(c=>c.id));
+  const total=state.cx.reduce((s,c)=>s+cxSaldo(c.id),0);
+  $("cxTotal").textContent=brl(total);
+  $("cxRend").textContent=brl(state.cx.reduce((s,c)=>s+cxRend(c.id),0));
+  const gm=cxMonth(state.month);
+  $("cxMesL").textContent="Guardado em "+mName(state.month,{month:"long"});
+  $("cxMes").textContent=brl(gm);$("cxMes").className="num "+(gm<0?"neg":gm>0?"pos":"");
+  $("cxCards").innerHTML=state.cx.length?[...state.cx].sort((a,b)=>(a.criado||0)-(b.criado||0)).map(c=>{
+    const s=cxSaldo(c.id),rd=cxRend(c.id),alvo=+c.alvo||0,p=alvo?Math.min(Math.max(s,0)/alvo,1):0;
+    return `<div class="card"><div class="top2"><span class="name">${esc(c.nome)}${c.exemplo?'<span class="tag ex">exemplo</span>':""}</span><span class="hint">${esc(c.banco||"")}</span></div>
+    <div class="num" style="font-size:1.4rem"><b>${brl(s)}</b></div>
+    ${rd?`<div class="hint">Já rendeu <span class="num ${rd<0?"neg":"pos"}">${brl(rd)}</span></div>`:""}
+    ${alvo?`<div class="track"><div class="fill in" style="width:${p*100}%"></div></div><div class="hint">${p>=1?"Meta batida!":`${pct(p)} da meta de ${brl(alvo)} · faltam ${brl(alvo-s)}`}</div>`:""}
+    <div class="inline"><input id="x-${c.id}" inputmode="decimal" placeholder="Valor (R$)" aria-label="Valor"></div>
+    <div class="inline"><button class="btn small" data-x="deposito" data-id="${c.id}">Guardar</button><button class="btn small ghost" data-x="resgate" data-id="${c.id}">Resgatar</button><button class="btn small ghost" data-x="saldo" data-id="${c.id}" title="Digite o saldo que aparece no banco">Atualizar saldo</button></div>
+    <button class="del" style="align-self:flex-end" data-xd="${c.id}">Apagar caixinha</button></div>`}).join("")
+    :`<div class="box empty">Cadastre suas caixinhas (Nubank, Inter, PicPay, poupança…) com quanto já tem guardado em cada uma.</div>`;
+  $("cxCards").querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>{
+    const id=b.dataset.id,a=b.dataset.x,v=parseMoney($("x-"+id).value);
+    if(!(v>=0)||(a!=="saldo"&&!(v>0))){toast(a==="saldo"?"Digite o saldo que aparece no banco":"Digite o valor primeiro");$("x-"+id).focus();return}
+    const s=cxSaldo(id);let mov;
+    if(a==="saldo"){const d=r2(v-s);if(!d){toast("O saldo já está igual");return}mov={tipo:"rendimento",valor:d}}
+    else if(a==="resgate"&&v>s+0.001){toast(`Essa caixinha só tem ${brl(s)}`);return}
+    else mov={tipo:a,valor:v};
+    store.add("caixinha_movs",{caixinhaId:id,...mov,data:today(),criado:Date.now()});
+    toast(a==="deposito"?"Guardado!":a==="resgate"?"Resgate registrado":(mov.valor>0?`Rendeu ${brl(mov.valor)}`:`Saldo ajustado em ${brl(mov.valor)}`));
+  });
+  $("cxCards").querySelectorAll("[data-xd]").forEach(b=>b.onclick=()=>confirmBtn(b,()=>{
+    const id=b.dataset.xd;store.del("caixinhas",id);state.cxm.filter(m=>m.caixinhaId===id).forEach(m=>store.del("caixinha_movs",m.id));toast("Caixinha apagada")}));
+  const hist=state.cxm.filter(m=>ids.has(m.caixinhaId)).sort((a,b)=>(b.data||"").localeCompare(a.data||"")||(b.criado||0)-(a.criado||0)).slice(0,40);
+  $("cxHist").innerHTML=hist.length?hist.map(m=>{
+    const c=state.cx.find(x=>x.id===m.caixinhaId);const sg=(MOV[m.tipo]?.[1]||1)*(+m.valor||0);const d=(m.data||"").split("-");
+    return `<div class="row"><div class="day"><b>${d[2]||"--"}</b>${mName(d[0]+"-"+d[1],{month:"short"})}</div>
+    <div class="desc"><div class="t">${MOV[m.tipo]?.[0]||m.tipo}</div><div class="c">${esc(c?c.nome:"")}</div></div>
+    <div class="num ${sg<0?"neg":"pos"}" style="white-space:nowrap">${sg<0?"−":"+"} ${brl(Math.abs(sg))}</div>
+    <div class="acts"><button class="del" data-xm="${m.id}">Desfazer</button></div></div>`}).join("")
+    :`<div class="empty">Cada vez que você guardar, resgatar ou atualizar o saldo, aparece aqui.</div>`;
+  $("cxHist").querySelectorAll("[data-xm]").forEach(b=>b.onclick=()=>confirmBtn(b,()=>store.del("caixinha_movs",b.dataset.xm),"Desfazer?"));
+}
+$("xf").addEventListener("submit",async e=>{e.preventDefault();if(!store)return;
+  const nome=$("xNome").value.trim();if(!nome)return;
+  const saldo=parseMoney($("xSaldo").value)||0;const id="cx"+Date.now().toString(36);
+  await store.set("caixinhas",id,{nome,banco:$("xBanco").value.trim(),alvo:parseMoney($("xAlvo").value)||0,criado:Date.now()});
+  if(saldo>0)await store.add("caixinha_movs",{caixinhaId:id,tipo:"inicial",valor:saldo,data:today(),criado:Date.now()});
+  e.target.reset();toast("Caixinha criada")});
+
 function renderDiv(){
   const abertas=state.div.filter(d=>(+d.pagas||0)<(+d.total||0));
   $("dMes").textContent=brl(abertas.reduce((s,d)=>s+(+d.parcela||0),0));
@@ -746,7 +829,8 @@ function renderAnalysis(mes,entrou,saiu,porCat){
     kpi("Gasto médio por mês",brl(avgOut),`Média de ${withData.length||0} ${withData.length===1?"mês":"meses"} com lançamentos`)+
     kpi("Já comprometido",comp==null?"—":pct(comp),`Fixos ${brl(fixOut)} + parcelas ${brl(parcelas)}`,comp!=null&&comp>.6?"neg":"")+
     (isCur?kpi("Previsão de gastos",brl(proj),proj>entrou&&entrou>0?"Assim, passa do que entrou no mês":projBase==="hist"?"Fixos do mês + seus gastos variáveis de costume":"Se continuar no ritmo atual até o fim do mês",proj>entrou&&entrou>0?"neg":"")
-          :kpi("Maior gasto",Object.keys(porCat).length?esc(Object.entries(porCat).sort((a,b)=>b[1]-a[1])[0][0]):"—",Object.keys(porCat).length?brl(Math.max(...Object.values(porCat))):"Sem gastos neste mês"));
+          :kpi("Maior gasto",Object.keys(porCat).length?esc(Object.entries(porCat).sort((a,b)=>b[1]-a[1])[0][0]):"—",Object.keys(porCat).length?brl(Math.max(...Object.values(porCat))):"Sem gastos neste mês"))+
+    (state.cx.length?kpi("Nas caixinhas",brl(state.cx.reduce((s,c)=>s+cxSaldo(c.id),0)),(()=>{const g=cxMonth(mk);return g>0?`Guardou ${brl(g)} neste mês`:g<0?`Resgatou ${brl(-g)} neste mês`:"Nada guardado neste mês ainda"})(),"pos"):"");
 
   drawChart(series);
 
@@ -784,7 +868,11 @@ function renderAnalysis(mes,entrou,saiu,porCat){
   if(comp!=null&&comp>.6)T("over",`Fixos e parcelas já levam ${pct(comp)} do que entrou. Evite novas parcelas até algumas terminarem.`);
   const ass=porCat["Assinaturas"]||0;if(ass>0)T("warn",`Você paga ${brl(ass)} por mês em assinaturas (${brl(ass*12)} por ano). Vale revisar quais ainda usa.`);
   const juros=porCat["Juros e tarifas"]||0;if(juros>0)T("over",`${brl(juros)} foram para juros e tarifas. Pagar a fatura inteira e evitar o cheque especial elimina esse gasto.`);
-  if(!state.metas.some(g=>/reserva|emerg/i.test(g.nome)))T("warn",`Você ainda não tem uma meta de reserva de emergência. Uma boa referência é juntar ${brl(avgOut*3||0)} a ${brl(avgOut*6||0)} (3 a 6 meses de gastos).`);
+  const cxTot=state.cx.reduce((s,c)=>s+cxSaldo(c.id),0);
+  const reserva=state.cx.filter(c=>/reserva|emerg/i.test(c.nome)).reduce((s,c)=>s+cxSaldo(c.id),0);
+  if(reserva>0&&avgOut>0){const mesesR=reserva/avgOut;T(mesesR>=3?"ok":"warn",`Sua reserva cobre ${mesesR.toLocaleString("pt-BR",{maximumFractionDigits:1})} ${mesesR>=0.95&&mesesR<1.05?"mês":"meses"} de gastos. ${mesesR>=6?"Ótimo: já passou dos 6 meses recomendados.":mesesR>=3?"Já passou do mínimo de 3 meses; o ideal é chegar a 6.":`Faltam ${brl(avgOut*3-reserva)} para chegar a 3 meses.`}`)}
+  const gmes=cxMonth(mk);if(gmes<0)T("warn",`Neste mês você resgatou ${brl(-gmes)} das caixinhas. Se foi para cobrir gastos do mês, vale ver na lista acima o que dá para cortar.`);
+  if(!state.metas.some(g=>/reserva|emerg/i.test(g.nome))&&!state.cx.some(c=>/reserva|emerg/i.test(c.nome)))T("warn",`Você ainda não tem uma meta de reserva de emergência. Uma boa referência é juntar ${brl(avgOut*3||0)} a ${brl(avgOut*6||0)} (3 a 6 meses de gastos).`);
   state.metas.forEach(g=>{if(!g.prazo||(+g.atual||0)>=g.alvo)return;const[py,pm]=g.prazo.split("-").map(Number);const now=new Date();const n=(py-now.getFullYear())*12+(pm-1-now.getMonth());
     if(n>0&&saldo>0&&(g.alvo-(+g.atual||0))/n>saldo)T("warn",`Para a meta “${esc(g.nome)}” no prazo, precisa guardar ${brl((g.alvo-(+g.atual||0))/n)} por mês, mais do que sobrou neste mês.`)});
   $("tips").innerHTML=tips.length?tips.join(""):`<li><span class="chip neu">Info</span><span>Lance seus gastos e receitas do mês para receber dicas.</span></li>`;
@@ -839,7 +927,8 @@ $("cf").addEventListener("submit",async e=>{e.preventDefault();if(!store)return;
   await store.add("cartoes",{nome:$("cNome").value.trim(),fechamento:f,vencimento:v,limite:parseMoney($("cLim").value)||0,criado:Date.now()});
   e.target.reset();toast("Cartão adicionado: escolha ele em “Pago com”")});
 $("clearEx").onclick=()=>confirmBtn($("clearEx"),()=>{
-  [["lancamentos",state.lanc],["metas",state.metas],["dividas",state.div],["fixos",state.fixos],["cartoes",state.cartoes]].forEach(([c,arr])=>arr.filter(x=>x.exemplo).forEach(x=>store.del(c,x.id)));
+  state.cxm.filter(m=>state.cx.some(c=>c.id===m.caixinhaId&&c.exemplo)).forEach(m=>store.del("caixinha_movs",m.id));
+  [["lancamentos",state.lanc],["metas",state.metas],["dividas",state.div],["fixos",state.fixos],["cartoes",state.cartoes],["caixinhas",state.cx]].forEach(([c,arr])=>arr.filter(x=>x.exemplo).forEach(x=>store.del(c,x.id)));
   state.lanc.filter(l=>l.fixoId&&state.fixos.some(f=>f.id===l.fixoId&&f.exemplo)).forEach(l=>store.del("lancamentos",l.id));
   toast("Exemplos apagados");
 },"Apagar tudo?");
