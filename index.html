@@ -75,6 +75,9 @@ button{cursor:pointer}
 .qhead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 .quick form{display:grid;grid-template-columns:auto 1fr 1.6fr 1.2fr 1fr;gap:8px;align-items:end}
 .quick .row2{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between}
+.quick .rec{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:end;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px}
+.quick .rec .hint{grid-column:1/-1}
+@media (max-width:520px){.quick .rec{grid-template-columns:1fr 1fr}}
 .quick .opts{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
 @media (max-width:760px){.quick form{grid-template-columns:1fr 1fr}.quick .wide{grid-column:1/-1}}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -242,6 +245,12 @@ table.t td:first-child{font-family:var(--f-body)}
       <label class="field wide"><span>Descrição</span><input id="qDesc" placeholder="Ex.: Mercado do mês" maxlength="80" autocomplete="off"></label>
       <label class="field"><span>Categoria</span><select id="qCat"></select></label>
       <label class="field"><span>Data</span><input id="qData" type="date" required></label>
+      <div class="rec" id="recWrap" hidden>
+        <label class="field"><span>Começa em</span><input type="month" id="qIni"></label>
+        <label class="field"><span>Termina em (opcional)</span><input type="month" id="qFim"></label>
+        <label class="field"><span>ou nº de parcelas</span><input type="number" id="qParc" min="1" max="480" placeholder="Ex.: 12"></label>
+        <p class="hint" id="recInfo">Deixe “Termina em” vazio para contas sem fim, como aluguel ou internet.</p>
+      </div>
       <div class="row2">
         <div class="opts">
           <label class="mini" id="pagWrap">Pago com <select id="qPag"></select></label>
@@ -383,6 +392,7 @@ table.t td:first-child{font-family:var(--f-body)}
   <section class="panel" data-panel="div" hidden>
     <div class="box">
       <h2>Nova dívida ou compra parcelada</h2>
+      <p class="hint">Use aqui para acompanhar dívidas que você paga por fora do controle mensal. Se a parcela sai do seu dinheiro todo mês, prefira lançar como fixo com fim (veja abaixo).</p>
       <form class="addform" id="df">
         <label class="field"><span>Nome</span><input id="dNome" placeholder="Celular no cartão" required maxlength="60"></label>
         <label class="field"><span>Valor da parcela (R$)</span><input id="dParcela" inputmode="decimal" required></label>
@@ -396,15 +406,16 @@ table.t td:first-child{font-family:var(--f-body)}
       <div><div class="label">Parcelas por mês</div><div class="num neg" id="dMes" style="font-size:1.3rem">R$ 0,00</div></div>
       <div><div class="label">Total que falta pagar</div><div class="num" id="dFalta" style="font-size:1.3rem">R$ 0,00</div></div>
     </div>
+    <div class="box" id="dFx"></div>
     <div class="cards" id="dividas"></div>
   </section>
 </div>
 <div class="toast" id="toast" hidden></div>
 
 <script>
-const CAT_OUT=["Moradia","Mercado","Contas da casa","Transporte","Comer fora","Saúde","Educação","Lazer","Assinaturas","Compras","Juros e tarifas","Outros gastos"];
+const CAT_OUT=["Moradia","Mercado","Contas da casa","Transporte","Comer fora","Saúde","Educação","Lazer","Assinaturas","Compras","Dívidas e acordos","Juros e tarifas","Outros gastos"];
 const CAT_IN=["Salário","Renda extra","Outras receitas"];
-const NEC=["Moradia","Mercado","Contas da casa","Transporte","Saúde","Educação","Juros e tarifas"];
+const NEC=["Moradia","Mercado","Contas da casa","Transporte","Saúde","Educação","Dívidas e acordos","Juros e tarifas"];
 const PAG_BASE=[["pix","Pix / débito"],["dinheiro","Dinheiro"],["boleto","Boleto"]];
 const brl=v=>(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const brlK=v=>Math.abs(v)>=1000?"R$ "+(v/1000).toLocaleString("pt-BR",{maximumFractionDigits:1})+" mil":"R$ "+Math.round(v);
@@ -419,6 +430,8 @@ const addM=(mk,n)=>{const[y,m]=mk.split("-").map(Number);const d=new Date(y,m-1+
 const mName=(mk,o={month:"long",year:"numeric"})=>{const[y,m]=mk.split("-").map(Number);return new Date(y,m-1,1).toLocaleDateString("pt-BR",o).replace(".","")};
 const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
 const moneyIn=v=>v?String(v).replace(".",","):"";
+const mDiff=(a,b)=>{const[ya,ma]=a.split("-").map(Number),[yb,mb]=b.split("-").map(Number);return(yb-ya)*12+(mb-ma)};
+const parcInfo=(f,mk)=>f&&f.fim&&f.inicio?{n:mDiff(f.inicio,mk)+1,total:mDiff(f.inicio,f.fim)+1,faltam:Math.max(0,mDiff(mk,f.fim)+1)}:null;
 const slug=s=>s.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-");
 
 const state={lanc:[],orc:{},metas:[],div:[],fixos:[],cartoes:[],cx:[],cxm:[],tipo:"despesa",month:today().slice(0,7),edit:null,showTable:false};
@@ -530,6 +543,7 @@ function startEdit(kind,obj){
   $("qData").value=kind==="fixo"?state.month+"-"+pad(Math.min(+obj.dia||1,28)):obj.data;
   fillPag(obj.pagamento||"pix");
   $("qRep").checked=kind==="fixo";$("repWrap").hidden=true;
+  $("recWrap").hidden=kind!=="fixo";if(kind==="fixo"){$("qIni").value=obj.inicio||state.month;$("qFim").value=obj.fim||"";$("qParc").value="";recSync()}
   $("quick").classList.add("editing");$("qCancel").hidden=false;$("qSubmit").textContent="Salvar alteração";
   $("qTitle").textContent=kind==="fixo"?"Editar fixo (todos os meses)":"Editar lançamento";
   $("qInfo").textContent=kind==="virtual"?"A mudança vale só para este mês; o fixo continua igual nos outros.":kind==="fixo"?"Vale para todos os meses em que este fixo entra. O dia da data é o dia do mês.":"";
@@ -537,10 +551,19 @@ function startEdit(kind,obj){
 }
 function endEdit(){
   state.edit=null;$("quick").classList.remove("editing");$("qCancel").hidden=true;$("qSubmit").textContent="Lançar";
-  $("qTitle").textContent="Novo lançamento";$("qInfo").textContent="";$("repWrap").hidden=false;$("qRep").checked=false;
+  $("qTitle").textContent="Novo lançamento";$("qInfo").textContent="";$("repWrap").hidden=false;$("qRep").checked=false;$("recWrap").hidden=true;$("qIni").value="";$("qFim").value="";$("qParc").value="";
   $("qValor").value="";$("qDesc").value="";
 }
 $("qCancel").onclick=endEdit;
+function recSync(from){
+  const ini=$("qIni").value,fim=$("qFim").value,n=parseInt($("qParc").value,10);
+  if(from==="parc"&&ini&&n>0)$("qFim").value=addM(ini,n-1);
+  else if(from!=="parc")$("qParc").value=ini&&fim&&fim>=ini?mDiff(ini,fim)+1:"";
+  const f2=$("qFim").value;const v=parseMoney($("qValor").value);
+  $("recInfo").textContent=ini&&f2?(f2<ini?"O fim precisa ser depois do início.":`Entra todo mês de ${mName(ini,{month:"short",year:"numeric"})} até ${mName(f2,{month:"short",year:"numeric"})}: ${mDiff(ini,f2)+1} parcelas${v>0?" · total "+brl(v*(mDiff(ini,f2)+1)):""}.`):"Deixe “Termina em” vazio para contas sem fim, como aluguel ou internet.";
+}
+$("qRep").onchange=()=>{$("recWrap").hidden=!$("qRep").checked;if($("qRep").checked&&!$("qIni").value)$("qIni").value=($("qData").value||today()).slice(0,7);recSync()};
+$("qIni").oninput=()=>recSync($("qParc").value?"parc":"");$("qFim").oninput=()=>recSync();$("qParc").oninput=()=>recSync("parc");$("qValor").addEventListener("input",()=>{if(!$("recWrap").hidden)recSync()});
 $("qf").addEventListener("submit",async e=>{
   e.preventDefault();if(!store)return;
   const v=parseMoney($("qValor").value);
@@ -550,8 +573,13 @@ $("qf").addEventListener("submit",async e=>{
   const ed=state.edit;
   if(ed&&ed.kind==="lanc"){const old=state.lanc.find(l=>l.id===ed.id)||{};await store.set("lancamentos",ed.id,{...old,...d});toast("Lançamento atualizado")}
   else if(ed&&ed.kind==="virtual"){await store.add("lancamentos",{...d,fixoId:ed.fixoId,criado:Date.now()});toast("Alterado só neste mês")}
-  else if(ed&&ed.kind==="fixo"){const{data:_,...rest}=d;await store.update("fixos",ed.id,{...rest,dia:+data.slice(8,10)});toast("Fixo atualizado")}
-  else if($("qRep").checked){const{data:_,...rest}=d;await store.add("fixos",{...rest,dia:+data.slice(8,10),inicio:data.slice(0,7),criado:Date.now()});toast("Fixo criado: entra todo dia "+(+data.slice(8,10)))}
+  else if(ed&&ed.kind==="fixo"||$("qRep").checked){
+    const ini=$("qIni").value||data.slice(0,7),fim=$("qFim").value||"";
+    if(fim&&fim<ini){toast("O mês do fim precisa ser depois do início");$("qFim").focus();return}
+    const{data:_,...rest}=d;const fx={...rest,dia:+data.slice(8,10),inicio:ini,fim};
+    if(ed&&ed.kind==="fixo"){await store.update("fixos",ed.id,fx);toast("Fixo atualizado")}
+    else{await store.add("fixos",{...fx,criado:Date.now()});toast(fim?`Criado: ${mDiff(ini,fim)+1} parcelas até ${mName(fim,{month:"short",year:"numeric"})}`:"Fixo criado: entra todo dia "+fx.dia)}
+    state.month=ini<=state.month&&(!fim||state.month<=fim)?state.month:ini;endEdit();render();$("qValor").focus();return}
   else{await store.add("lancamentos",{...d,criado:Date.now()});toast(d.tipo==="despesa"?"Gasto lançado":"Receita lançada")}
   state.month=data.slice(0,7);endEdit();render();$("qValor").focus();
 });
@@ -599,7 +627,7 @@ function render(){
 
   const hasEx=[...state.lanc,...state.metas,...state.div,...state.fixos,...state.cartoes,...state.cx].some(x=>x.exemplo);
   $("exNotice").hidden=!hasEx;
-  const tags=x=>(x.exemplo?'<span class="tag ex">exemplo</span>':"")+(x.fixoId?'<span class="tag fx">fixo</span>':"")+(x.virtual&&x.data>hoje?'<span class="tag prev">previsto</span>':"");
+  const tags=x=>(x.exemplo?'<span class="tag ex">exemplo</span>':"")+(x.fixoId?(()=>{const pi=parcInfo(state.fixos.find(f=>f.id===x.fixoId),(x.data||"").slice(0,7));return pi?`<span class="tag fx">parcela ${pi.n}/${pi.total}</span>`:'<span class="tag fx">fixo</span>'})():"")+(x.virtual&&x.data>hoje?'<span class="tag prev">previsto</span>':"");
 
   // lista
   const fc=$("fCat").value;
@@ -674,7 +702,7 @@ function renderFixos(){
   $("fxList").innerHTML=list.length?list.map(f=>{
     const ended=f.fim&&f.fim<mk;const out=f.tipo!=="receita";
     return `<div class="row${ended?" skipped":""}"><div class="day"><b>${pad(f.dia||1)}</b>todo mês</div>
-    <div class="desc"><div class="t">${esc(f.descricao)}${f.exemplo?'<span class="tag ex">exemplo</span>':""}${ended?'<span class="tag prev">encerrado</span>':""}</div><div class="c">${esc(f.categoria)}${out&&f.pagamento?" · "+esc(pagName(f.pagamento)):""} · desde ${mName(f.inicio||mk,{month:"short",year:"numeric"})}${f.fim?" até "+mName(f.fim,{month:"short",year:"numeric"}):""}</div></div>
+    <div class="desc"><div class="t">${esc(f.descricao)}${f.exemplo?'<span class="tag ex">exemplo</span>':""}${ended?'<span class="tag prev">encerrado</span>':""}</div><div class="c">${esc(f.categoria)}${out&&f.pagamento?" · "+esc(pagName(f.pagamento)):""} · desde ${mName(f.inicio||mk,{month:"short",year:"numeric"})}${f.fim?" até "+mName(f.fim,{month:"short",year:"numeric"}):" · sem fim"}</div>${(()=>{const pi=parcInfo(f,mk);if(!pi||ended)return"";if(mk<f.inicio)return`<div class="c">Começa em ${mName(f.inicio,{month:"long",year:"numeric"})} · ${pi.total} parcelas</div>`;return`<div class="c">Parcela ${pi.n} de ${pi.total} · faltam ${pi.faltam} (${brl(pi.faltam*(+f.valor||0))})</div>`})()}</div>
     <div class="num ${out?"neg":"pos"}" style="white-space:nowrap">${out?"−":"+"} ${brl(+f.valor)}</div>
     <div class="acts">${ended?`<button class="del" data-f="reopen" data-id="${f.id}">Reativar</button>`:`<button class="del" data-f="edit" data-id="${f.id}">Editar</button><button class="del" data-f="end" data-id="${f.id}">Encerrar a partir deste mês</button>`}<button class="del" data-f="del" data-id="${f.id}">Apagar de todos os meses</button></div></div>`}).join("")
     :`<div class="empty">Nenhum fixo ainda. Cadastre o salário, o aluguel, a internet e outras contas que se repetem; eles passam a entrar sozinhos.</div>`;
@@ -788,8 +816,13 @@ $("xf").addEventListener("submit",async e=>{e.preventDefault();if(!store)return;
 
 function renderDiv(){
   const abertas=state.div.filter(d=>(+d.pagas||0)<(+d.total||0));
-  $("dMes").textContent=brl(abertas.reduce((s,d)=>s+(+d.parcela||0),0));
-  $("dFalta").textContent=brl(state.div.reduce((s,d)=>s+Math.max(0,(+d.total||0)-(+d.pagas||0))*(+d.parcela||0),0));
+  const mkNow=today().slice(0,7);
+  const fxParc=state.fixos.filter(f=>f.tipo!=="receita"&&f.fim&&f.fim>=mkNow);
+  const fxRest=f=>Math.max(0,mDiff(f.inicio&&f.inicio>mkNow?f.inicio:mkNow,f.fim)+1);
+  $("dMes").textContent=brl(abertas.reduce((s,d)=>s+(+d.parcela||0),0)+fxParc.filter(f=>!f.inicio||f.inicio<=mkNow).reduce((s,f)=>s+(+f.valor||0),0));
+  $("dFalta").textContent=brl(state.div.reduce((s,d)=>s+Math.max(0,(+d.total||0)-(+d.pagas||0))*(+d.parcela||0),0)+fxParc.reduce((s,f)=>s+fxRest(f)*(+f.valor||0),0));
+  $("dFx").innerHTML=fxParc.length?`<h2>Parcelas que entram sozinhas</h2><p class="hint">Fixos com data para acabar, como acordos do Serasa. Elas já contam nos gastos de cada mês.</p><div class="list">${fxParc.map(f=>{const pi=parcInfo(f,mkNow);const n=fxRest(f);
+    return `<div class="row"><div class="day"><b>${pad(f.dia||1)}</b>todo mês</div><div class="desc"><div class="t">${esc(f.descricao)}</div><div class="c">${pi&&mkNow>=f.inicio?`Parcela ${pi.n} de ${pi.total} · `:""}faltam ${n} · termina em ${mName(f.fim,{month:"short",year:"numeric"})}</div></div><div class="num neg" style="white-space:nowrap">${brl(+f.valor)}<div class="hint" style="text-align:right">falta ${brl(n*(+f.valor||0))}</div></div></div>`}).join("")}</div>`:`<p class="hint" style="margin:0">Dica: acordos com parcela todo mês (como os do Serasa) podem ser lançados como gasto fixo com fim. Marque “Repetir todo mês” no lançamento e escolha até quando vai. Assim eles entram sozinhos nos gastos e somem quando acabar.</p>`;
   $("dividas").innerHTML=state.div.length?[...state.div].sort((a,b)=>(a.criado||0)-(b.criado||0)).map(d=>{
     const pagas=+d.pagas||0,total=+d.total||1,rest=Math.max(0,total-pagas);const p=pagas/total;
     const fim=rest>0?`Última parcela em ${mName(addM(today().slice(0,7),rest-1),{month:"short",year:"numeric"})}`:"";
